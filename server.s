@@ -2,61 +2,53 @@
 .section .text 
     .global _start 
         .include "./syscalls.inc"
-        _start: 
+        _start:
             # socket; bind; listen; accept 
-            call init_accept
+            call init_socket_bind_listen
+            
+        
+        main: 
+            call init_accept 
+            call parent 
 
-            # set registers for data read 
+        parent:
+            # fork 
+            mov rax, 0x39 
+            syscall 
+            mov fork_pid, rax 
+
+            test rax, rax 
+            jz child
+           
+             
+            mov rdi, 4 
+            call close 
+          
+
+            # wait4 
+            mov rax, 0x3d 
+            mov rdi, [fork_pid] 
+            mov rsi, [exit_status] 
+            xor rdx, rdx 
+            syscall 
+             
+            // go back to main 
+            jmp main 
+        child:
+            mov rdi, 3 
+            call close 
+
+            # set registers for data read   
             mov rdi, accept_fd
             lea rsi, [request]
             mov rdx, 256 
-            # call read 
             call read 
-            
-            call check_for_get
-            
-            # set registers for open 
-            lea rdi, [file_name] 
-            xor rsi, rsi 
-            call open 
-            
-            # save file fd in bss section for future use  
-            mov file_fd, rax 
-            
-            # read file 
-            mov rdi, file_fd
-            lea rsi, [read_data]
-            mov rdx, 1024 
-            call read
-            
-            # store read data len 
-            mov read_data_len, rax  
 
-            # close file fd 
-            mov rdi, file_fd 
-            call close
-            
-            # set registers for data write  
-            mov rdi, accept_fd 
-            lea rsi, [conn_200_start]
-            
-            lea rdx, [conn_200_len]
-            # call write 
-            call write 
-
-            # write file contents
-            mov rdi, accept_fd 
-            lea rsi, [read_data] 
-            mov rdx, read_data_len
-            call write 
-
-            mov rdi, accept_fd 
-            call close
-            
+            call GET 
             # exit 
             jmp exit 
 
-        init_accept: 
+        init_socket_bind_listen: 
             # set registers for socket 
             mov dil, 0x02 
             mov sil, 0x01 
@@ -65,8 +57,7 @@
             call socket 
             
             # save the socket fd to bss section for later use
-            mov socket_fd, rax 
-            
+            mov socket_fd, rax    
             # set registers for bind 
             mov rdi, socket_fd
             lea rsi, sockaddr_struct
@@ -81,7 +72,8 @@
             
             # call listen
             call listen 
-            
+            ret 
+        init_accept: 
             # set reigsters for accept 
             mov rdi, 3 
             xor rsi, rsi 
@@ -93,43 +85,86 @@
             mov accept_fd, rax 
             ret 
         
-        check_for_get: 
-        #  thanks to chatgpt 
-            lea rdi, GET
-            lea rsi, request 
-            mov rcx, 4 
-            cld # clear direction flag to compare from "left to right" rather than "right to left" 
-            repe cmpsb # cmp bytes one by one at rdi and rsp. Repeat until equal and rcx != 0 (rcx--)   
-            jz get_file_name
-            xor rax, rax 
-            inc rax 
+        getpid:
+            mov rax, 0x27 
+            syscall
             ret 
 
-        get_file_name: 
-            xor rax, rax 
-            xor rbx, rbx 
-            xor rcx, rcx 
-           
-            mov rax, ' '
-            lea rsi, [file_name] # destination  
-            lea rdi, [request] # source 
-            add rdi, 4 # skip "GET " part 
-            
+        GET: 
 
-        extract_filename: 
-            mov bl, byte ptr [rdi] 
-            cmp bl, al 
-            je found
-            mov cl, byte ptr [rdi]
-            mov [rsi], cl  
-            inc rsi 
-            inc rdi 
-            jmp extract_filename 
-        
-        found: 
-            xor rax, rax 
-            ret
+            check_for_get: 
+            #  thanks to chatgpt 
+                lea rdi, GET_string
+                lea rsi, request 
+                mov rcx, 4 
+                cld # clear direction flag to compare from "left to right" rather than "right to left" 
+                repe cmpsb # cmp bytes one by one at rdi and rsp. Repeat until equal and rcx != 0 (rcx--)   
+                jz get_file_name
+                xor rax, rax 
+                inc rax 
+                ret 
+
+            get_file_name: 
+                xor rax, rax 
+                xor rbx, rbx 
+                xor rcx, rcx 
+               
+                mov rax, ' '
+                lea rsi, [file_name] # destination  
+                lea rdi, [request] # source 
+                add rdi, 4 # skip "GET " part 
+                
+
+            extract_filename: 
+                mov bl, byte ptr [rdi] 
+                cmp bl, al 
+                je found
+                mov cl, byte ptr [rdi]
+                mov [rsi], cl  
+                inc rsi 
+                inc rdi 
+                jmp extract_filename 
             
+            found: 
+                
+                # set registers for open 
+                lea rdi, [file_name] 
+                xor rsi, rsi 
+                call open 
+                
+                # save file fd in bss section for future use  
+                mov file_fd, rax 
+                
+                # read file 
+                mov rdi, file_fd
+                lea rsi, [read_data]
+                mov rdx, 1024 
+                call read
+                
+                # store read data len 
+                mov read_data_len, rax  
+
+                # close file fd 
+                mov rdi, file_fd 
+                call close
+                
+                # set registers for data write  
+                mov rdi, accept_fd 
+                lea rsi, [conn_200_start]
+                
+                lea rdx, [conn_200_len]
+                # call write 
+                call write 
+
+                # write file contents
+                mov rdi, accept_fd 
+                lea rsi, [read_data] 
+                mov rdx, read_data_len
+                call write 
+
+                mov rdi, accept_fd 
+                call close
+                ret
 
 .section .data 
     sockaddr_struct: 
@@ -141,12 +176,14 @@
         .ascii "HTTP/1.0 200 OK\r\n\r\n" 
     conn_200_end: 
         .set conn_200_len, conn_200_end-conn_200_start 
-    GET: 
+    GET_string: 
         .ascii "GET "
 
 .section .bss 
     .lcomm socket_fd, 4 
     .lcomm accept_fd, 4
+    .lcomm fork_pid, 4 
+    .lcomm exit_status, 4
     .lcomm file_name, 20 
     .lcomm file_fd, 4  
     .lcomm request, 256 
