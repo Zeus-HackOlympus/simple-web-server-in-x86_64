@@ -3,9 +3,8 @@
     .global _start 
         .include "./syscalls.inc"
         _start:
-            # socket; bind; listen; accept 
+            # socket; bind; listen
             call init_socket_bind_listen
-            
         
         main: 
             call init_accept 
@@ -20,22 +19,20 @@
             test rax, rax 
             jz child
            
-             
             mov rdi, 4 
             call close 
           
-
             # wait4 
-            mov rax, 0x3d 
-            mov rdi, [fork_pid] 
-            mov rsi, [exit_status] 
-            xor rdx, rdx 
-            syscall 
-             
+#            mov rax, 0x3d 
+#            mov rdi, [fork_pid] 
+#            mov rsi, [exit_status] 
+#            xor rdx, rdx 
+#            syscall 
+
             // go back to main 
             jmp main 
         child:
-            mov rdi, 3 
+            mov rdi, [socket_fd]
             call close 
 
             # set registers for data read   
@@ -44,7 +41,10 @@
             mov rdx, 256 
             call read 
 
-            call GET 
+            call GET
+            
+            call POST 
+            
             # exit 
             jmp exit 
 
@@ -84,27 +84,20 @@
             # save accepted fd in bss section for later use 
             mov accept_fd, rax 
             ret 
-        
-        getpid:
-            mov rax, 0x27 
-            syscall
-            ret 
 
         GET: 
-
-            check_for_get: 
-            #  thanks to chatgpt 
+            GET_check_for_get: 
                 lea rdi, GET_string
                 lea rsi, request 
                 mov rcx, 4 
                 cld # clear direction flag to compare from "left to right" rather than "right to left" 
                 repe cmpsb # cmp bytes one by one at rdi and rsp. Repeat until equal and rcx != 0 (rcx--)   
-                jz get_file_name
+                jz GET_get_file_name
                 xor rax, rax 
                 inc rax 
                 ret 
 
-            get_file_name: 
+            GET_get_file_name: 
                 xor rax, rax 
                 xor rbx, rbx 
                 xor rcx, rcx 
@@ -115,18 +108,17 @@
                 add rdi, 4 # skip "GET " part 
                 
 
-            extract_filename: 
+            GET_extract_filename: 
                 mov bl, byte ptr [rdi] 
                 cmp bl, al 
-                je found
+                je GET_found
                 mov cl, byte ptr [rdi]
                 mov [rsi], cl  
                 inc rsi 
                 inc rdi 
-                jmp extract_filename 
+                jmp GET_extract_filename 
             
-            found: 
-                
+            GET_found: 
                 # set registers for open 
                 lea rdi, [file_name] 
                 xor rsi, rsi 
@@ -137,12 +129,12 @@
                 
                 # read file 
                 mov rdi, file_fd
-                lea rsi, [read_data]
+                lea rsi, [data]
                 mov rdx, 1024 
                 call read
-                
+
                 # store read data len 
-                mov read_data_len, rax  
+                mov data_len, rax  
 
                 # close file fd 
                 mov rdi, file_fd 
@@ -151,19 +143,111 @@
                 # set registers for data write  
                 mov rdi, accept_fd 
                 lea rsi, [conn_200_start]
-                
                 lea rdx, [conn_200_len]
                 # call write 
                 call write 
 
                 # write file contents
                 mov rdi, accept_fd 
-                lea rsi, [read_data] 
-                mov rdx, read_data_len
+                lea rsi, [data] 
+                mov rdx, data_len
                 call write 
 
                 mov rdi, accept_fd 
                 call close
+                ret
+        
+        POST: 
+            POST_check_for_post:  
+                lea rdi, POST_string
+                lea rsi, request 
+                mov rcx, 4 
+                cld # clear direction flag to compare from "left to right" rather than "right to left" 
+                repe cmpsb # cmp bytes one by one at rdi and rsp. Repeat until equal and rcx != 0 (rcx--)   
+                jz POST_get_file_name
+                xor rax, rax 
+                inc rax 
+                ret 
+            
+            POST_get_file_name: 
+                
+                xor rax, rax 
+                xor rbx, rbx 
+                xor rcx, rcx 
+               
+                mov rax, ' '
+                lea rsi, [file_name] # destination  
+                lea rdi, [request] # source 
+                add rdi, 5 # skip "POST " part 
+                
+
+            POST_extract_filename: 
+                mov bl, byte ptr [rdi] 
+                cmp bl, al 
+                je POST_found
+                mov cl, byte ptr [rdi]
+                mov [rsi], cl  
+                inc rsi 
+                inc rdi 
+                jmp POST_extract_filename 
+            
+            POST_found:
+                lea rdi, [file_name] 
+                mov rsi, 0x41 # O_CREAT | O_WRONLY 
+                mov rdx, 0x1ff # mode = 0777
+                call open 
+                mov file_fd, rax 
+                
+                xor rax, rax 
+                xor rbx, rbx
+                
+                xor rsi, rsi 
+                lea rdi, [request] # request string 
+                add rdi, 5 
+                lea rsi, [post_header_end_s]
+
+           POST_seed_to_post_data:
+                mov rbx, 0x0a0d0a0d #0x0d0a0d0a # "\r\n\r\n" in rbx for cmp
+                cmp ebx, dword ptr [rdi] 
+                je POST_extract_data
+                inc rdi
+                jmp POST_seed_to_post_data
+
+            POST_extract_data:
+                # source 
+                lea r10, [post_header_end_len]
+                add rdi, r10 # skip "\r\n\r\n" 
+                mov r9, rdi # save rdi state in r9 for future use to calculate size  
+                xor rax, rax
+                xor rbx, rbx 
+                xor rcx, rcx # null byte 
+                lea rsi, [data]  # destination 
+                            
+            POST_extract_data_LOOP: 
+                mov bl, byte ptr [rdi] 
+                cmp bl, al # if null byte 
+                je POST_data_write # break out from loop 
+                mov cl, byte ptr [rdi] # put source in 8bit register 
+                mov [rsi], cl # copy 1 byte in *destinatoon  
+                inc rsi  
+                inc rdi 
+                jmp POST_extract_data_LOOP 
+                
+            POST_data_write: 
+                sub rdi, r9  # to get length of data 
+                mov rdx,  rdi
+                mov rdi, file_fd 
+                lea rsi, [data] 
+                call write 
+           
+                mov rdi, file_fd
+                call close
+
+                mov rdi, accept_fd
+                lea rsi, [conn_200_start]
+                lea rdx, [conn_200_len] 
+                call write 
+
                 ret
 
 .section .data 
@@ -178,14 +262,19 @@
         .set conn_200_len, conn_200_end-conn_200_start 
     GET_string: 
         .ascii "GET "
-
+    POST_string: 
+        .ascii "POST "
+    post_header_end_s: 
+        .ascii "\r\n\r\n"
+    post_header_end_e: 
+        .set post_header_end_len, post_header_end_e-post_header_end_s
 .section .bss 
-    .lcomm socket_fd, 4 
-    .lcomm accept_fd, 4
-    .lcomm fork_pid, 4 
-    .lcomm exit_status, 4
-    .lcomm file_name, 20 
-    .lcomm file_fd, 4  
-    .lcomm request, 256 
-    .lcomm read_data, 1024
-    .lcomm read_data_len, 4 
+    .lcomm socket_fd, 0x04 
+    .lcomm accept_fd, 0x04
+    .lcomm fork_pid, 0x04 
+    .lcomm exit_status, 0x04
+    .lcomm file_name, 0x14 
+    .lcomm file_fd, 0x04  
+    .lcomm request, 0x150 
+    .lcomm data, 0x300 # used for file/post data 
+    .lcomm data_len, 0x04 
