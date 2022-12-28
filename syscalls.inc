@@ -47,7 +47,7 @@ exit:
     # exit with 0 
     xor rdi, rdi 
     xor rax, rax 
-    mov al, 60 
+    mov al, 0x3c
     syscall 
 
 

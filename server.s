@@ -3,86 +3,85 @@
     .global _start 
         .include "./syscalls.inc"
         _start:
-            # socket; bind; listen
-            call init_socket_bind_listen
-        
         main: 
+            call init_socket_bind_listen
+        LOOP: 
             call init_accept 
-            call parent 
-
-        parent:
+            
             # fork 
             mov rax, 0x39 
             syscall 
             mov fork_pid, rax 
-
+            
             test rax, rax 
-            jz child
-           
-            mov rdi, 4 
+            jz child 
+            
+            mov rdi, [clientfd]
             call close 
-          
-            # wait4 
-#            mov rax, 0x3d 
-#            mov rdi, [fork_pid] 
-#            mov rsi, [exit_status] 
-#            xor rdx, rdx 
-#            syscall 
+            
+            # do sleep
+            mov rax, 0x23
+            mov rdi, ts 
+            xor rsi, rsi 
+            syscall 
 
-            // go back to main 
-            jmp main 
+            jmp LOOP
+        
         child:
-            mov rdi, [socket_fd]
+            mov rdi, [socket_fd] # close socket fd for child process 
             call close 
 
             # set registers for data read   
-            mov rdi, accept_fd
+            mov rdi, clientfd
             lea rsi, [request]
-            mov rdx, 256 
+            mov rdx, 0x400 
             call read 
 
             call GET
             
             call POST 
-            
+
             # exit 
             jmp exit 
 
         init_socket_bind_listen: 
             # set registers for socket 
+            xor rax, rax 
+            xor rdi, rdi
+            xor rsi, rsi 
+            xor rdx, rdx 
+
             mov dil, 0x02 
             mov sil, 0x01 
             xor rdx, rdx 
             # call socket 
             call socket 
+            mov socket_fd, rax    # save the socket fd to bss section for later use
             
-            # save the socket fd to bss section for later use
-            mov socket_fd, rax    
             # set registers for bind 
             mov rdi, socket_fd
             lea rsi, sockaddr_struct
             mov dl, 0x10 
 
-            # call bind 
-            call bind 
-            
+            call bind
+ 
             # set registers for listen
             mov rdi, socket_fd
             xor rsi, rsi 
-            
-            # call listen
             call listen 
+            
             ret 
+        
         init_accept: 
             # set reigsters for accept 
-            mov rdi, 3 
+            mov rdi, socket_fd 
             xor rsi, rsi 
             xor rdx, rdx 
 
             call accept
             
             # save accepted fd in bss section for later use 
-            mov accept_fd, rax 
+            mov clientfd, rax 
             ret 
 
         GET: 
@@ -130,7 +129,7 @@
                 # read file 
                 mov rdi, file_fd
                 lea rsi, [data]
-                mov rdx, 1024 
+                mov rdx, 0x400
                 call read
 
                 # store read data len 
@@ -141,19 +140,19 @@
                 call close
                 
                 # set registers for data write  
-                mov rdi, accept_fd 
+                mov rdi, clientfd 
                 lea rsi, [conn_200_start]
                 lea rdx, [conn_200_len]
                 # call write 
                 call write 
 
                 # write file contents
-                mov rdi, accept_fd 
+                mov rdi, clientfd 
                 lea rsi, [data] 
                 mov rdx, data_len
                 call write 
 
-                mov rdi, accept_fd 
+                mov rdi, clientfd 
                 call close
                 ret
         
@@ -243,14 +242,20 @@
                 mov rdi, file_fd
                 call close
 
-                mov rdi, accept_fd
+                mov rdi, clientfd
                 lea rsi, [conn_200_start]
                 lea rdx, [conn_200_len] 
                 call write 
 
                 ret
 
-.section .data 
+.section .data
+    ts_sec: 
+        .quad 0
+    ts_nsec: 
+        .quad 0x11e1a300 #500000000 
+    ts: 
+        .quad ts_sec, ts_nsec
     sockaddr_struct: 
         .2byte 0x02 
         .2byte 0x5000  
@@ -268,13 +273,14 @@
         .ascii "\r\n\r\n"
     post_header_end_e: 
         .set post_header_end_len, post_header_end_e-post_header_end_s
+
 .section .bss 
     .lcomm socket_fd, 0x04 
-    .lcomm accept_fd, 0x04
+    .lcomm clientfd, 0x04
     .lcomm fork_pid, 0x04 
     .lcomm exit_status, 0x04
     .lcomm file_name, 0x14 
     .lcomm file_fd, 0x04  
-    .lcomm request, 0x150 
-    .lcomm data, 0x300 # used for file/post data 
+    .lcomm request, 0x400
+    .lcomm data, 0x400 # used for file/post data 
     .lcomm data_len, 0x04 
