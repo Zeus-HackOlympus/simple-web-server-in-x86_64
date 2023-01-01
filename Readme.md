@@ -2,6 +2,10 @@
 
 This is a simple web server written in x86\_64 assembly. Currently it supports only 2 HTTP requests - GET and POST.  
 
+### Performance 
+
+On average it handles 100 random HTTP GET and POST request in 0.109 seconds.
+
 ###  Installation 
 1. Just use make. 
 
