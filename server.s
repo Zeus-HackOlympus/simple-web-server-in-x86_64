@@ -19,12 +19,6 @@
             mov rdi, [clientfd]
             call close 
             
-            # do sleep
-            mov rax, 0x23
-            mov rdi, ts 
-            xor rsi, rsi 
-            syscall 
-
             jmp LOOP
         
         child:
@@ -246,16 +240,9 @@
                 lea rsi, [conn_200_start]
                 lea rdx, [conn_200_len] 
                 call write 
-
                 ret
 
 .section .data
-    ts_sec: 
-        .quad 0
-    ts_nsec: 
-        .quad 0x11e1a300 #500000000 
-    ts: 
-        .quad ts_sec, ts_nsec
     sockaddr_struct: 
         .2byte 0x02 
         .2byte 0x5000  
